@@ -1,0 +1,134 @@
+name: Run test suite
+
+on:
+  pull_request:
+  push:
+    branches:
+      - 'main'
+
+jobs:
+  tests:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        php-version:
+          - 8.3
+        dependencies:
+          - locked
+
+    services:
+      postgres:
+        image: postgres:16-alpine3.20
+        ports:
+          - "5432:5432"
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.APP_NAME }}-testdb
+        options: >-
+          --health-cmd "pg_isready"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 3
+
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          coverage: xdebug
+          php-version: ${{ matrix.php-version }}
+
+      - name: Determine composer cache directory
+        id: determine-composer-cache-directory
+        run: |
+          cd src
+          echo "COMPOSER_CACHE_DIR=$(composer config cache-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache dependencies installed with composer
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.determine-composer-cache-directory.outputs.COMPOSER_CACHE_DIR }}
+          key: php-${{ matrix.php-version }}-composer-${{ matrix.dependencies }}-${{ hashFiles('composer.lock') }}
+          restore-keys: php-${{ matrix.php-version }}-composer-${{ matrix.dependencies }}-
+
+      - name: Run composer
+        run: |
+          cd src
+          composer install -n --prefer-dist --no-ansi --no-interaction --no-progress --no-scripts
+        env:
+          COMPOSER_AUTH: ${{ secrets.COMPOSER_AUTH }}
+
+      - name: Archive composer packages
+        run: |
+          cd src
+          tar -zcf ${{ secrets.APP_NAME }}-composer-package-artifact.tar.gz vendor
+
+      - name: Upload app artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ secrets.APP_NAME }}-composer-package-artifact
+          path: src/${{ secrets.APP_NAME }}-composer-package-artifact.tar.gz
+          retention-days: 1
+
+      - name: Set Node.js 22.x
+        uses: actions/setup-node@v3
+        with:
+          node-version: 22.x
+
+      - name: Prepare app
+        run: |
+          cd src
+          cp .env.ci .env
+          php artisan key:generate
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install frontend dependencies
+        run: |
+          cd src
+          bun install
+
+      - name: Build frontend dependencies
+        run: |
+          cd src
+          bun run build
+
+      - name: Run tests
+        run: |
+          cd src
+          php artisan migrate --force
+          composer test:coverage:clover
+        env:
+          APP_ENV: testing
+          DB_CONNECTION: pgsql
+          DB_HOST: 127.0.0.1
+          DB_DATABASE: ${{ secrets.APP_NAME }}-testdb
+          DB_USER: postgres
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          REDIS_HOST: 127.0.0.1
+
+      - name: Static analysis
+        run: |
+          cd src
+          composer stan
+
+      - name: Code style
+        run: |
+          cd src
+          ./vendor/bin/pint --test
+
+      ## This task should come last in the list after all other checks
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./src/coverage.xml
+          fail_ci_if_error: false
+          verbose: true
+          slug: ${{ secrets.CODECOV_SLUG }}

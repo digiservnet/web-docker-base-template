@@ -1,0 +1,97 @@
+services:
+    TEMPLATE-redis:
+        image: redis:alpine3.20
+        container_name: TEMPLATE-redis
+        ports:
+            - "6379:6379"
+        networks:
+            - TEMPLATE
+
+    TEMPLATE-db:
+        image: postgres:16.3
+        container_name: TEMPLATE-db
+        working_dir: /application/src
+        volumes:
+            - .:/application
+        environment:
+            - POSTGRES_USER=postgres
+            - POSTGRES_PASSWORD=postgres
+            - POSTGRES_DB=TEMPLATE
+        ports:
+            - "5432:5432"
+        healthcheck:
+            test: [ "CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d TEMPLATE" ]
+            interval: 5s
+            timeout: 10s
+            retries: 5
+        networks:
+            - TEMPLATE
+
+    TEMPLATE-testdb:
+        image: postgres:16.3
+        container_name: TEMPLATE-testdb
+        working_dir: /application/src
+        volumes:
+            - .:/application
+        environment:
+            - POSTGRES_USER=postgres
+            - POSTGRES_PASSWORD=postgres
+            - POSTGRES_DB=TEMPLATE
+        ports:
+            - "15432:5432"
+        healthcheck:
+            test: [ "CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d TEMPLATE" ]
+            interval: 5s
+            timeout: 10s
+            retries: 5
+        networks:
+            - TEMPLATE
+
+    TEMPLATE-web:
+        image: nginx:alpine
+        container_name: TEMPLATE-web
+        working_dir: /application/src
+        volumes:
+            - .:/application
+            - .docker/dev/nginx/:/etc/nginx/conf.d/
+        ports:
+            - "80:80"
+        depends_on:
+            - TEMPLATE-php
+        networks:
+            - TEMPLATE
+
+    TEMPLATE-php:
+        build:
+            context: .docker/dev/php-fpm
+        container_name: TEMPLATE-php
+        working_dir: /application/src
+        volumes:
+            - .:/application
+            - ~/.composer/auth.json:/home/dockeruser/.composer/auth.json
+        environment:
+            XDEBUG_CONFIG: "client_host=host.docker.internal"
+            PHP_IDE_CONFIG: "serverName=TEMPLATE"
+            COMPOSER_AUDIT_ABANDONED: "report"
+        depends_on:
+            TEMPLATE-db:
+                condition: service_healthy
+            TEMPLATE-testdb:
+                condition: service_healthy
+            TEMPLATE-redis:
+                condition: service_started
+        networks:
+            - TEMPLATE
+
+    TEMPLATE-mail:
+        image: axllent/mailpit
+        container_name: TEMPLATE-mail
+        working_dir: /application/src
+        ports:
+            - "18025:8025"
+            - "1025:1025"
+        networks:
+            - TEMPLATE
+
+networks:
+    TEMPLATE:

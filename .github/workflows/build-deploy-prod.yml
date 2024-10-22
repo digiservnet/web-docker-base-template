@@ -1,0 +1,188 @@
+name: Build and deploy Production application
+
+on:
+  push:
+    tags:
+      - "[0-9].[0-9]+.[0-9]+"
+
+jobs:
+  tests:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        php-version:
+          - 8.3
+        dependencies:
+          - locked
+
+    services:
+      postgres:
+        image: postgres:16-alpine3.20
+        ports:
+          - "5432:5432"
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.APP_NAME }}-testdb
+        options: >-
+          --health-cmd "pg_isready"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 3
+
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          coverage: xdebug
+          php-version: ${{ matrix.php-version }}
+
+      - name: Determine composer cache directory
+        id: determine-composer-cache-directory
+        run: |
+          cd src
+          echo "COMPOSER_CACHE_DIR=$(composer config cache-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache dependencies installed with composer
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.determine-composer-cache-directory.outputs.COMPOSER_CACHE_DIR }}
+          key: php-${{ matrix.php-version }}-composer-${{ matrix.dependencies }}-${{ hashFiles('composer.lock') }}
+          restore-keys: php-${{ matrix.php-version }}-composer-${{ matrix.dependencies }}-
+
+      - name: Run composer
+        run: |
+          cd src
+          composer install -n --prefer-dist --no-ansi --no-interaction --no-progress --no-scripts
+        env:
+          COMPOSER_AUTH: ${{ secrets.COMPOSER_AUTH }}
+
+      - name: Archive composer packages
+        run: |
+          cd src
+          tar -zcf ${{ secrets.APP_NAME }}-composer-package-artifact.tar.gz vendor
+
+      - name: Upload app artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ secrets.APP_NAME }}-composer-package-artifact
+          path: src/${{ secrets.APP_NAME }}-composer-package-artifact.tar.gz
+          retention-days: 1
+
+      - name: Set Node.js 22.x
+        uses: actions/setup-node@v3
+        with:
+          node-version: 22.x
+
+      - name: Prepare app
+        run: |
+          cd src
+          cp .env.ci .env
+          php artisan key:generate
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install frontend dependencies
+        run: |
+          cd src
+          bun install
+
+      - name: Build frontend dependencies
+        run: |
+          cd src
+          bun run build
+
+      - name: Run tests
+        run: |
+          cd src
+          php artisan migrate --force
+          composer test:coverage:clover
+        env:
+          APP_ENV: testing
+          DB_CONNECTION: pgsql
+          DB_HOST: 127.0.0.1
+          DB_DATABASE: ${{ secrets.APP_NAME }}-testdb
+          DB_USER: postgres
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          REDIS_HOST: 127.0.0.1
+
+      - name: Static analysis
+        run: |
+          cd src
+          composer stan
+
+      - name: Code style
+        run: |
+          cd src
+          ./vendor/bin/pint --test
+
+  build:
+    runs-on: ubuntu-22.04
+    needs: tests
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v3
+
+      - name: Prepare app
+        run: |
+          cd src
+          doppler secrets download --project ${{ secrets.APP_NAME }} --config stg --format env --no-file > .env
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_STAGING }}
+
+      - name: Run composer
+        run: |
+          cd src
+          composer install -n --prefer-dist --no-ansi --no-interaction --no-progress --no-scripts
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install frontend dependencies
+        run: |
+          cd src
+          bun install
+
+      - name: Build frontend dependencies
+        run: |
+          cd src
+          bun run build
+
+      - name: Login to DockerHub Registry
+        run: echo ${{ secrets.DOCKERHUB_TOKEN }} | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+
+      - name: Build docker image
+        run: |
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.APP_NAME }}:staging || true
+          docker build -f .docker/prod/Dockerfile --target production --build-arg env="$ENV_PRODUCTION" --build-arg doppler_token="$DOPPLER_TOKEN" --cache-from ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.APP_NAME }}:staging --tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.APP_NAME }}:staging --tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.APP_NAME }}:${{ github.ref_name }} .
+        shell: bash
+        env:
+          ENV_PRODUCTION: ${{ secrets.ENV_PRODUCTION }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+
+      - name: Push docker image
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.APP_NAME }}:staging
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.APP_NAME }}:${{ github.ref_name }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Workflow Webhook Action
+        uses: distributhor/workflow-webhook@v3.0.7
+        env:
+          webhook_url: ${{ secrets.WEBHOOK_DEPLOY_STG_URL }}
+          webhook_secret: ${{ secrets.WEBHOOK_DEPLOY_SECRET }}
