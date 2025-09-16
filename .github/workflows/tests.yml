@@ -2,17 +2,14 @@ name: Run test suite
 
 on:
   pull_request:
-  push:
-    branches:
-      - 'main'
 
 jobs:
   tests:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         php-version:
-          - 8.3
+          - 8.4
         dependencies:
           - locked
 
@@ -24,7 +21,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          POSTGRES_DB: ${{ secrets.APP_NAME }}-testdb
+          POSTGRES_DB: [[APPLICATION]]-testdb
         options: >-
           --health-cmd "pg_isready"
           --health-interval 10s
@@ -32,7 +29,7 @@ jobs:
           --health-retries 3
 
       redis:
-        image: redis:alpine
+        image: valkey/valkey:9.0-alpine
         ports:
           - 6379:6379
 
@@ -66,13 +63,13 @@ jobs:
       - name: Archive composer packages
         run: |
           cd src
-          tar -zcf ${{ secrets.APP_NAME }}-composer-package-artifact.tar.gz vendor
+          tar -zcf [[APPLICATION]]-composer-package-artifact.tar.gz vendor
 
       - name: Upload app artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ secrets.APP_NAME }}-composer-package-artifact
-          path: src/${{ secrets.APP_NAME }}-composer-package-artifact.tar.gz
+          name: [[APPLICATION]]-composer-package-artifact
+          path: src/[[APPLICATION]]-composer-package-artifact.tar.gz
           retention-days: 1
 
       - name: Set Node.js 22.x
@@ -108,7 +105,7 @@ jobs:
           APP_ENV: testing
           DB_CONNECTION: pgsql
           DB_HOST: 127.0.0.1
-          DB_DATABASE: ${{ secrets.APP_NAME }}-testdb
+          DB_DATABASE: [[APPLICATION]]-testdb
           DB_USER: postgres
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           REDIS_HOST: 127.0.0.1
@@ -131,4 +128,4 @@ jobs:
           files: ./src/coverage.xml
           fail_ci_if_error: false
           verbose: true
-          slug: ${{ secrets.CODECOV_SLUG }}
+          slug: [[APPLICATION]]/[[APPLICATION]]

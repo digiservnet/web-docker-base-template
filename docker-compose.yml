@@ -1,97 +1,88 @@
 services:
-    TEMPLATE-redis:
-        image: redis:alpine3.20
-        container_name: TEMPLATE-redis
+    [[APPLICATION]]-cache:
+        image: valkey/valkey:9.0-alpine
+        container_name: [[APPLICATION]]-cache
         ports:
             - "6379:6379"
         networks:
-            - TEMPLATE
+            - [[APPLICATION]]
 
-    TEMPLATE-db:
-        image: postgres:16.3
-        container_name: TEMPLATE-db
-        working_dir: /application/src
-        volumes:
-            - .:/application
+    [[APPLICATION]]-db:
+        image: mariadb:12.0.2-noble
+        container_name: [[APPLICATION]]-db
         environment:
-            - POSTGRES_USER=postgres
-            - POSTGRES_PASSWORD=postgres
-            - POSTGRES_DB=TEMPLATE
+            - MYSQL_ROOT_PASSWORD=root
+            - MYSQL_DATABASE=[[APPLICATION]]
+            - MYSQL_HOST=[[APPLICATION]]-db
         ports:
-            - "5432:5432"
+            - "3306:3306"
         healthcheck:
-            test: [ "CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d TEMPLATE" ]
-            interval: 5s
-            timeout: 10s
-            retries: 5
+            test: ["CMD", "mariadb-admin" ,"ping", "-h", "localhost", "--password=root"]
         networks:
-            - TEMPLATE
+            - [[APPLICATION]]
 
-    TEMPLATE-testdb:
-        image: postgres:16.3
-        container_name: TEMPLATE-testdb
-        working_dir: /application/src
-        volumes:
-            - .:/application
+    [[APPLICATION]]-testdb:
+        image: mariadb:12.0.2-noble
+        container_name: [[APPLICATION]]-testdb
         environment:
-            - POSTGRES_USER=postgres
-            - POSTGRES_PASSWORD=postgres
-            - POSTGRES_DB=TEMPLATE
+            - MYSQL_ROOT_PASSWORD=root
+            - MYSQL_DATABASE=[[APPLICATION]]
+            - MYSQL_HOST=[[APPLICATION]]-db
         ports:
-            - "15432:5432"
+            - "13306:3306"
         healthcheck:
-            test: [ "CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d TEMPLATE" ]
-            interval: 5s
-            timeout: 10s
-            retries: 5
+            test: ["CMD", "mariadb-admin" ,"ping", "-h", "localhost", "--password=root"]
         networks:
-            - TEMPLATE
+            - [[APPLICATION]]
 
-    TEMPLATE-web:
+    [[APPLICATION]]-web:
         image: nginx:alpine
-        container_name: TEMPLATE-web
+        container_name: [[APPLICATION]]-web
         working_dir: /application/src
         volumes:
             - .:/application
             - .docker/dev/nginx/:/etc/nginx/conf.d/
         ports:
             - "80:80"
+            - "8080:8080"
         depends_on:
-            - TEMPLATE-php
+            - [[APPLICATION]]-php
         networks:
-            - TEMPLATE
+            - [[APPLICATION]]
 
-    TEMPLATE-php:
+    [[APPLICATION]]-php:
         build:
             context: .docker/dev/php-fpm
-        container_name: TEMPLATE-php
+        container_name: [[APPLICATION]]-php
         working_dir: /application/src
         volumes:
             - .:/application
             - ~/.composer/auth.json:/home/dockeruser/.composer/auth.json
         environment:
             XDEBUG_CONFIG: "client_host=host.docker.internal"
-            PHP_IDE_CONFIG: "serverName=TEMPLATE"
+            PHP_IDE_CONFIG: "serverName=[[APPLICATION]]"
             COMPOSER_AUDIT_ABANDONED: "report"
+            DOPPLER_TOKEN_IANHDEV: ${DOPPLER_TOKEN_IANHDEV:-''}
         depends_on:
-            TEMPLATE-db:
+            [[APPLICATION]]-db:
                 condition: service_healthy
-            TEMPLATE-testdb:
+            [[APPLICATION]]-testdb:
                 condition: service_healthy
-            TEMPLATE-redis:
+            [[APPLICATION]]-cache:
                 condition: service_started
         networks:
-            - TEMPLATE
+            - [[APPLICATION]]
 
-    TEMPLATE-mail:
+    [[APPLICATION]]-mail:
         image: axllent/mailpit
-        container_name: TEMPLATE-mail
+        container_name: [[APPLICATION]]-mail
         working_dir: /application/src
         ports:
             - "18025:8025"
             - "1025:1025"
         networks:
-            - TEMPLATE
+            - [[APPLICATION]]
 
 networks:
-    TEMPLATE:
+    [[APPLICATION]]:
+

@@ -1,0 +1,84 @@
+name: Build and deploy Staging application
+
+on:
+  push:
+    tags:
+      - '*'
+#  workflow_dispatch:
+#    inputs:
+#      branch:
+#        description: 'Branch to deploy'
+#        required: true
+#        default: 'main'
+#        options:
+#          - 'main'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.4
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v3
+
+      - name: Set Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Prepare app
+        run: |
+          cd src
+          doppler secrets download --project [[APPLICATION]] --config stg --format env --no-file > .env
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_STAGING }}
+
+      - name: Run composer
+        run: |
+          cd src
+          composer install -n --prefer-dist --no-ansi --no-interaction --no-progress --no-scripts
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: |
+          cd src
+          bun install
+
+      - name: Build frontend dependencies
+        run: |
+          cd src
+          bun run build
+
+      - name: Login to Docker Registry
+        run: echo ${{ secrets.DOCKER_PASSWORD }} | docker login docker.digiserv.net -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
+
+      - name: Build docker image
+        run: |
+          docker pull docker.digiserv.net/[[APPLICATION]]/[[APPLICATION]]:staging || true
+          docker build -f .docker/prod/Dockerfile --target production --build-arg env="$ENV_PRODUCTION" --build-arg doppler_token="$DOPPLER_TOKEN" --cache-from docker.digiserv.net/[[APPLICATION]]/[[APPLICATION]]:staging --tag docker.digiserv.net/[[APPLICATION]]/[[APPLICATION]]:staging --tag docker.digiserv.net/[[APPLICATION]]/[[APPLICATION]]:${{ github.ref_name }} .
+        shell: bash
+        env:
+          ENV_PRODUCTION: ${{ secrets.ENV_PRODUCTION }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+
+      - name: Push docker image
+        run: |
+          docker push docker.digiserv.net/[[APPLICATION]]/[[APPLICATION]]:staging
+          docker push docker.digiserv.net/[[APPLICATION]]/[[APPLICATION]]:${{ github.ref_name }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Workflow Webhook Action
+        uses: distributhor/workflow-webhook@v3.0.7
+        env:
+          webhook_url: ${{ secrets.WEBHOOK_DEPLOY_STG_URL }}
+          webhook_secret: ${{ secrets.WEBHOOK_DEPLOY_SECRET }}

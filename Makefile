@@ -28,14 +28,14 @@ init: ## Initialise & configure the environment.
 	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php composer install
 	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php php artisan migrate
 	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php php artisan make:user
-	@cd src; yarn; yarn dev
+	@cd src; bun install; bun run dev
 
 configure: ## (Re)configure an existing env vars.
 	@docker compose exec --no-TTY --user dockeruser -e XDEBUG_MODE=off TEMPLATE-php doppler secrets download --project TEMPLATE --token $(DOPPLER_TOKEN_APP_NAME) --config dev --format=env --no-file > src/.env
 
 start: ## Start the dev environment.
 	@docker compose up -d
-	@cd src; yarn dev
+	@cd src; bun run dev
 
 stop: ## Stop the dev environment.
 	@docker compose stop
@@ -44,10 +44,10 @@ kill: ## Destroy the dev environment.
 	@docker compose down
 
 shell: ## Gain shell access to the PHP container as the 'dockeruser' user.
-	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php bash
+	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php ash
 
 root-shell: ## Gain shell access to the PHP container as the 'root' user.
-	@docker compose exec -e XDEBUG_MODE=off -w /application/src TEMPLATE-php bash
+	@docker compose exec -e XDEBUG_MODE=off -w /application/src TEMPLATE-php ash
 
 db-migrate: ## Migrate the database.
 	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php php artisan migrate
@@ -59,10 +59,7 @@ db-rollback: ## Rollback 'STEP=' number of migration steps
 	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php php artisan migrate:rollback "$(STEP)"
 
 db-build: ## Migrate the database with a fresh schema and run the seeders.
-	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php php artisan migrate:fresh
-	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php php artisan make:user
-	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php php artisan db:seed --class=RecruiterSeeder
-	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php php artisan db:seed --class=OpportunitySeeder
+	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php php artisan migrate:fresh --seed
 
 db-seed: ## Run the database seeders.
 	@docker compose exec --user dockeruser -e XDEBUG_MODE=off -w /application/src TEMPLATE-php php artisan db:seed --class=RecruiterSeeder

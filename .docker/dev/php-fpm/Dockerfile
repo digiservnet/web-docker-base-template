@@ -1,15 +1,16 @@
-FROM digiserv/php8-fpm-dev:8.3.12-bookworm
+FROM docker.digiserv.net/digiserv/php8-fpm-dev:8.4.12-alpine
 WORKDIR "/application"
 
-RUN apt update
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-RUN apt -y install supervisor nodejs apt-transport-https ca-certificates curl gnupg
-RUN curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg
-RUN echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | tee /etc/apt/sources.list.d/doppler-cli.list
-RUN apt update
-RUN apt install doppler
+RUN apk add --update zip supervisor mysql-client ca-certificates curl gnupg && rm -rf /tmp/* /var/cache/apk/*
+#RUN curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg
+#RUN echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | tee /etc/apt/sources.list.d/doppler-cli.list
+#RUN apt update
+#RUN apt install doppler
 
-COPY web.ini /etc/supervisor/conf.d/web.conf
+RUN docker-php-ext-install pdo_mysql
+
+RUN mkdir -p /etc/supervisor.d
+COPY web.ini /etc/supervisor/conf.d
 
 # Dev php.ini
 COPY php.ini /usr/local/etc/php/php.ini
@@ -25,7 +26,4 @@ RUN addgroup --gid 1000 dockeruser && \
 RUN mkdir /home/dockeruser/.composer
 RUN chown -R dockeruser:dockeruser /home/dockeruser/.composer
 
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod 0755 /entrypoint.sh
-#ENTRYPOINT [ "/entrypoint.sh" ]
-CMD ["/usr/bin/supervisord"]
+CMD ["/usr/bin/supervisord", "--nodaemon", "-c", "/etc/supervisord.conf"]
